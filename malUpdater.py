@@ -332,9 +332,9 @@ class MALUpdater:
         # If launching and cache has anime_id, we can skip search and open directly.
         if self.ACTION == "launch" and cache_entry and cache_entry.get("anime_id"):
             anime_id = cache_entry["anime_id"]
-            print(f'Opening AniList (cached) for guessed "{file_info.name}": https://anilist.co/anime/{anime_id}')
-            osd_message(f'Opening AniList for "{file_info.name}"')
-            webbrowser.open_new_tab(f"https://anilist.co/anime/{anime_id}")
+            print(f'Opening MAL (cached) for guessed "{file_info.name}": https://myanimelist.net/anime/{anime_id}')
+            osd_message(f'Opening MAL for "{file_info.name}"')
+            webbrowser.open_new_tab(f"https://myanimelist.net/anime/{anime_id}")
             return
 
         # Use cached data if available, otherwise fetch fresh info
