@@ -26,7 +26,7 @@ import time
 import webbrowser
 from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import Any, ClassVar
+from typing import Any
 
 import requests
 from guessit import guessit  # type: ignore
@@ -79,110 +79,17 @@ class FileInfo:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════════════════════════════
-# GRAPHQL QUERIES
-# ═══════════════════════════════════════════════════════════════════════════════════════════════════════
-
-
-class AniListQueries:
-    """GraphQL queries for AniList API operations."""
-
-    # Query to search for anime with optional filters
-    # Variables: search (String), year (FuzzyDateInt), page (Int), format (MediaFormat)
-    SEARCH_ANIME = """
-        query($search: String, $year: FuzzyDateInt, $page: Int, $format_in: [MediaFormat]) {
-            GlobalSearch: Page(page: $page, perPage: 20) {
-                media (search: $search, type: ANIME, startDate_greater: $year, format_in: $format_in) {
-                    id
-                    title { romaji, english }
-                    season
-                    seasonYear
-                    episodes
-                    duration
-                    format
-                    status
-                    mediaListEntry {
-                        status
-                        progress
-                        media {
-                            episodes
-                        }
-                    }
-                    relations {
-                        edges {
-                            relationType
-                            node {
-                                id
-                                format
-                                title {
-                                    romaji
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            UserSearch: Page(page: $page, perPage: 20) {
-                media (search: $search, type: ANIME, startDate_greater: $year, format_in: $format_in, onList: true) {
-                    id
-                    title { romaji, english }
-                    season
-                    seasonYear
-                    episodes
-                    duration
-                    format
-                    status
-                    startDate { year month day }
-                    mediaListEntry {
-                        status
-                        progress
-                        media {
-                            episodes
-                        }
-                    }
-                    relations {
-                        edges {
-                            relationType
-                            node {
-                                id
-                                format
-                                title {
-                                    romaji
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    """
-
-    # Mutation to save/update media list entry (works for both adding and updating)
-    # Variables: mediaId (Int), progress (Int), status (MediaListStatus)
-    SAVE_MEDIA_LIST_ENTRY = """
-        mutation ($mediaId: Int, $progress: Int, $status: MediaListStatus) {
-            SaveMediaListEntry (mediaId: $mediaId, progress: $progress, status: $status) {
-                status
-                id
-                progress
-                mediaId
-            }
-        }
-    """
-
-
-# ═══════════════════════════════════════════════════════════════════════════════════════════════════════
 # MAIN ANILIST UPDATER CLASS
 # ═══════════════════════════════════════════════════════════════════════════════════════════════════════
 
 
-class AniListUpdater:
-    """AniList authentication, file parsing, API requests, and progress updates."""
+class MALUpdater:
+    MAL_API_URL: str = "https://api.myanimelist.net/v2"
+    AUTH_PATH: str = os.path.join(os.path.dirname(__file__), "mal_auth.json")
 
-    ANILIST_API_URL: str = "https://graphql.anilist.co"
-    TOKEN_PATH: str = os.path.join(os.path.dirname(__file__), "anilistToken.txt")
+    # --- Restoring the missing variables ---
     CACHE_PATH: str = os.path.join(os.path.dirname(__file__), "cache.json")
-    OPTIONS: ClassVar[dict[str, Any]] = {"excludes": ["country", "language"]}
+    OPTIONS: dict[str, Any] = {"excludes": ["country", "language"]}
     CACHE_REFRESH_RATE: int = 24 * 60 * 60
 
     _CHARS_TO_REPLACE: str = r'\/:!*?"<>|._-'
@@ -194,21 +101,15 @@ class AniListUpdater:
     # INITIALIZATION & TOKEN HANDLING
     # ──────────────────────────────────────────────────────────────────────────────────────────────────
 
-    # Load token
     def __init__(self, options: dict[str, Any], action: str) -> None:
-        """
-        Initialize AniListUpdater with configuration and action.
-
-        Args:
-            options (dict[str, Any]): Configuration options.
-            action (str): Action to perform ('update' or 'launch').
-        """
         self.access_token: str | None = self.load_access_token()
         self.options: dict[str, Any] = options
         self.ACTION: str = action
         self._cache: dict[str, Any] | None = None
 
     # Load token from anilistToken.txt
+    AUTH_PATH: str = os.path.join(os.path.dirname(__file__), "mal_auth.json")
+
     def load_access_token(self) -> str | None:
         """
         Load access token from file, supporting legacy formats.
@@ -217,23 +118,12 @@ class AniListUpdater:
             str | None: Access token or None if not found.
         """
         try:
-            if not os.path.exists(self.TOKEN_PATH):
+            if not os.path.exists(self.AUTH_PATH):
+                print(f"Auth file not found at {self.AUTH_PATH}. Please run setup_auth.py first.")
                 return None
-            with open(self.TOKEN_PATH, encoding="utf-8") as f:
-                lines = f.read().splitlines()
-            if not lines:
-                return None
-
-            # Check for legacy formats and clean them up if found
-            has_legacy_cache = any(";;" in ln for ln in lines)
-            has_legacy_user_id = ":" in lines[0] and lines[0].split(":", 1)[0].isdigit()
-
-            # Cleans up the file and returns the token directly
-            if has_legacy_cache or has_legacy_user_id:
-                return self.cleanup_legacy_formats(lines, has_legacy_user_id)
-
-            # If no legacy formats, the first line should have the token.
-            return lines[0].strip()
+            with open(self.AUTH_PATH, "r", encoding="utf-8") as f:
+                auth_data = json.load(f)
+            return auth_data.get("access_token")
 
         except Exception as e:
             print(f"Error reading access token: {e}")
@@ -258,7 +148,7 @@ class AniListUpdater:
             token = header.split(":", 1)[1].strip() if has_legacy_user_id and ":" in header else header.strip()
 
             # Rewrite token file with just the token, removing user_id and cache lines
-            with open(self.TOKEN_PATH, "w", encoding="utf-8") as f:
+            with open(self.AUTH_PATH, "w", encoding="utf-8") as f:
                 f.write(token + ("\n" if token else ""))
 
             if has_legacy_user_id:
@@ -393,33 +283,35 @@ class AniListUpdater:
 
     # Function to make an api request to AniList's api
     def make_api_request(
-        self, query: str, variables: dict[str, Any] | None = None, access_token: str | None = None
+        self, endpoint: str, method: str = "GET", data: dict[str, Any] | None = None
     ) -> dict[str, Any] | None:
-        """
-        Make POST request to AniList GraphQL API.
+        """Make REST request to MyAnimeList API v2."""
+        headers = {"Authorization": f"Bearer {self.access_token}"}
+        url = f"{self.MAL_API_URL}/{endpoint}"
 
-        Args:
-            query (str): GraphQL query string.
-            variables (dict[str, Any] | None): Query variables.
-            access_token (str | None): AniList access token.
+        try:
+            if method == "GET":
+                response = requests.get(url, headers=headers, params=data, timeout=10)
+            elif method in {"PATCH", "POST", "PUT"}:
+                # MAL requires x-www-form-urlencoded for modifying list entries
+                headers["Content-Type"] = "application/x-www-form-urlencoded"
+                response = requests.patch(url, headers=headers, data=data, timeout=10)
+            else:
+                # This explicitly handles any other method so Pyright knows 'response' is safe
+                print(f"Unsupported HTTP method: {method}")
+                return None
 
-        Returns:
-            dict[str, Any] | None: API response or None on error.
-        """
-        headers = {"Content-Type": "application/json", "Accept": "application/json"}
+            # 200 OK, 201 Created, 204 No Content
+            if response.status_code in {200, 201, 204}:
+                return response.json() if response.text else {}
 
-        if access_token:
-            headers["Authorization"] = f"Bearer {access_token}"
-
-        response = requests.post(
-            self.ANILIST_API_URL, json={"query": query, "variables": variables}, headers=headers, timeout=10
-        )
-        if response.status_code == 200:
-            return response.json()
-        print(
-            f"API request failed: {response.status_code} - {response.text}\nQuery: {query}\nVariables: {variables}"
-        )
-        return None
+            print(
+                f"API request failed: {response.status_code} - {response.text}\nEndpoint: {endpoint}\nData: {data}"
+            )
+            return None
+        except Exception as e:
+            print(f"Request error: {e}")
+            return None
 
     # ──────────────────────────────────────────────────────────────────────────────────────────────────
     # SEASON & EPISODE HANDLING
@@ -743,109 +635,45 @@ class AniListUpdater:
 
     def get_anime_info_and_progress(self, file_info: FileInfo) -> AnimeInfo:
         """
-        Query AniList for anime info and user progress.
-
-        Args:
-            file_info (FileInfo): Anime file information.
-
-        Returns:
-            AnimeInfo: Complete anime information.
-
-        Raises:
-            Exception: If it could not find the anime.
+        Query MyAnimeList for anime info and user progress.
         """
-        # Unpack file info
         name, file_progress, year, file_format = file_info
 
-        # If theres a format specified, search only for that format.
-        format_in = [file_format] if file_format else ["TV", "TV_SHORT", "MOVIE", "SPECIAL", "OVA", "ONA"]
+        # Search MAL via GET request
+        endpoint = "anime"
+        params = {"q": name, "limit": 5, "fields": "id,title,num_episodes,my_list_status,media_type,status"}
 
-        # We first need to make sure if we should search ALL of anime or only the user's list
-        # Only those that are in the user's list at first
-        query = AniListQueries.SEARCH_ANIME
-        variables = {"search": name, "year": year or 1, "page": 1, "format_in": format_in}
+        response = self.make_api_request(endpoint, method="GET", data=params)
 
-        response = self.make_api_request(query, variables, self.access_token)
+        if not response or "data" not in response or not response["data"]:
+            raise Exception(f"Couldn't find an anime from this title! ({name}). Is it on your list?")
 
-        if not response or "data" not in response:
-            return AnimeInfo(None, None, None, None, None, None)
+        # Grab the first valid result from the search query
+        first_result = response["data"][0]["node"]
 
-        user_list_seasons = response["data"]["UserSearch"]["media"]
-        global_search_seasons = response["data"]["GlobalSearch"]["media"]
+        mal_id = first_result["id"]
+        title = first_result["title"]
+        total_episodes = first_result.get("num_episodes")
 
-        # If no results for both, raise exception
-        if not user_list_seasons and not global_search_seasons:
-            raise Exception(f"Couldn't find an anime from this title! ({name}). Is it in your list?")
+        current_progress = None
+        current_status = None
 
-        seasons = user_list_seasons or global_search_seasons  # Priority to the user list
+        # Check if the user has this anime on their list
+        my_list_status = first_result.get("my_list_status")
+        if my_list_status:
+            current_progress = my_list_status.get("num_episodes_watched")
+            # MAL statuses: watching, completed, on_hold, dropped, plan_to_watch
+            current_status = my_list_status.get("status")
 
-        # Results from the API request from the user's list or from global search.
-        # If from global search then entry will be None, and the anime will be added if ADD_ENTRY_IF_MISSING
-        entry = seasons[0]["mediaListEntry"]
-        anime_data = AnimeInfo(
-            seasons[0]["id"],
-            seasons[0]["title"]["romaji"],
-            entry["progress"] if entry is not None else None,
-            seasons[0]["episodes"],
-            file_progress,
-            entry["status"] if entry is not None else None,
-        )
+        anime_data = AnimeInfo(mal_id, title, current_progress, total_episodes, file_progress, current_status)
 
-        is_absolute_numbering = seasons and seasons[0]["episodes"] and file_progress > seasons[0]["episodes"]
-        filtered_seasons = []
-
-        # Check if it's using absolute numbering, if so, find out the main series and all sequels
-        if is_absolute_numbering:
-            filtered_seasons = self.filter_valid_seasons(seasons)
-            season_episode_info = self.find_season_and_episode(filtered_seasons, file_progress)
-
-            # If it is None, needs to use global searchto find out the series exact episode
-            if not filtered_seasons or season_episode_info.season_id is None:
-                seasons = global_search_seasons
-
-                # At this point it should either have the correct main series or it failed
-                # Recalculate both
-                filtered_seasons = self.filter_valid_seasons(seasons)
-                season_episode_info = self.find_season_and_episode(filtered_seasons, file_progress)
-
-                if filtered_seasons is None or season_episode_info.season_id is None:
-                    raise Exception(f"No valid seasons found for '{name}'.")
-
-            seasons = filtered_seasons
-
-            found_season = next(
-                (season for season in seasons if season["id"] == season_episode_info.season_id), None
-            )
-            found_entry = (
-                found_season["mediaListEntry"] if found_season and found_season["mediaListEntry"] else None
-            )
-            anime_data = AnimeInfo(
-                season_episode_info.season_id,
-                season_episode_info.season_title,
-                season_episode_info.progress,
-                season_episode_info.episodes,
-                season_episode_info.relative_episode,
-                found_entry["status"] if found_entry else None,
-            )
-            print(f"Final guessed anime: {anime_data.anime_name}")
-            print(f"Absolute episode {file_progress} corresponds to episode: {anime_data.file_progress}")
-        else:
-            print(f"Final guessed anime: {seasons[0]['title']['romaji']}")
+        print(f"Final guessed anime: {title}")
         return anime_data
 
     # Update the anime based on file progress
     def update_episode_count(self, result: AnimeInfo) -> AnimeInfo:
         """
-        Update episode count and/or status on AniList per user settings.
-
-        Args:
-            result (AnimeInfo): Anime information.
-
-        Returns:
-            AnimeInfo: Updated anime information.
-
-        Raises:
-            Exception: If the update fails.
+        Update episode count and/or status on MyAnimeList per user settings.
         """
         if result is None:
             raise Exception("Parameter in update_episode_count is null.")
@@ -855,137 +683,96 @@ class AniListUpdater:
         if anime_id is None:
             raise Exception("Couldn't find that anime! Make sure it is on your list and the title is correct.")
 
-        # Only launch anilist
+        # Only launch MyAnimeList
         if self.ACTION == "launch":
-            osd_message(f'Opening AniList for "{anime_name}"')
-            print(f'Opening AniList for "{anime_name}": https://anilist.co/anime/{anime_id}')
-            webbrowser.open_new_tab(f"https://anilist.co/anime/{anime_id}")
+            osd_message(f'Opening MAL for "{anime_name}"')
+            print(f'Opening MAL for "{anime_name}": https://myanimelist.net/anime/{anime_id}')
+            webbrowser.open_new_tab(f"https://myanimelist.net/anime/{anime_id}")
             return result
 
-        # Handle adding anime to list if it's not already there (ADD_ENTRY_IF_MISSING feature)
+        # Handle ADD_ENTRY_IF_MISSING feature
         if current_progress is None and current_status is None:
-            # This indicates anime was found in search but is not in user's list
             if self.options.get("ADD_ENTRY_IF_MISSING", False):
                 print(f'Adding "{anime_name}" to your list since you\'re watching it...')
+                initial_status = "watching"
 
-                # Set to CURRENT by default
-                initial_status = "CURRENT"
-
-                # Set to COMPLETED if last episode (for example, movies)
                 if file_progress == total_episodes and self.options.get(
                     "SET_TO_COMPLETED_AFTER_LAST_EPISODE_CURRENT", False
                 ):
-                    initial_status = "COMPLETED"
+                    initial_status = "completed"
 
-                # Add to list
                 if self.add_anime_to_list(anime_id, anime_name, initial_status, file_progress):
                     osd_message(f'Added "{anime_name}" to your list with progress: {file_progress}')
                     print(f'Successfully added "{anime_name}" to your list with progress: {file_progress}')
-                    # Return updated result
                     return AnimeInfo(
                         anime_id, anime_name, file_progress, total_episodes, file_progress, initial_status
                     )
                 raise Exception(f"Failed to add '{anime_name}' to your list.")
             raise Exception("Failed to get current episode count. Is it on your list?")
 
+        status_to_set = None
+        is_rewatching = False
+
         # Handle completed -> rewatching on first episode
         if (
-            current_status == "COMPLETED"
+            current_status == "completed"
             and file_progress == 1
             and self.options["SET_COMPLETED_TO_REWATCHING_ON_FIRST_EPISODE"]
         ):
-            # Needs to update in 2 steps, since AniList
-            # doesn't allow setting progress while changing the status from completed to rewatching.
-            # If you try, it will just reset the progress to 0.
-            print(
-                "Setting status to REPEATING (rewatching) and updating progress for first episode of completed anime."
-            )
+            print("Setting status to watching (rewatching) for first episode of completed anime.")
+            status_to_set = "watching"
+            is_rewatching = True
 
-            # Step 1: Set to REPEATING, progress=0
-            query = AniListQueries.SAVE_MEDIA_LIST_ENTRY
-
-            variables = {"mediaId": anime_id, "progress": 0, "status": "REPEATING"}
-            response = self.make_api_request(query, variables, self.access_token)
-
-            # Step 2: Set progress to 1
-            variables = {"mediaId": anime_id, "progress": 1}
-            response = self.make_api_request(query, variables, self.access_token)
-
-            if response and "data" in response:
-                updated_progress = response["data"]["SaveMediaListEntry"]["progress"]
-                osd_message(f'Updated "{anime_name}" to REPEATING with progress: {updated_progress}')
-                print(f"Episode count updated successfully! New progress: {updated_progress}")
-
-                return AnimeInfo(anime_id, anime_name, updated_progress, total_episodes, 1, "REPEATING")
-            print("Failed to update episode count.")
-            raise Exception("Failed to update episode count.")
-
-        # Handle updating progress for rewatching
-        if current_status == "REPEATING" and self.options["UPDATE_PROGRESS_WHEN_REWATCHING"]:
-            print("Updating progress for anime set to REPEATING (rewatching).")
-            status_to_set = "REPEATING"
-
-        # Only update if status is CURRENT, PLANNING, or PAUSED
-        elif current_status in {"CURRENT", "PLANNING", "PAUSED"}:
-            # If its lower than the current progress, dont update.
+        # Only update if status is watching, plan_to_watch, or on_hold
+        elif current_status in {"watching", "plan_to_watch", "on_hold"}:
             if file_progress and current_progress is not None and file_progress <= current_progress:
                 raise Exception(f"Episode was not new. Not updating ({file_progress} <= {current_progress})")
-
-            status_to_set = "CURRENT"
-
+            status_to_set = "watching"
         else:
             raise Exception(f"Anime is not in a modifiable state (status: {current_status}). Not updating.")
 
-        # Set to COMPLETED if last episode and the option is enabled
-        if file_progress == total_episodes and (
-            (
-                current_status in {"CURRENT", "PLANNING", "PAUSED"}
-                and self.options["SET_TO_COMPLETED_AFTER_LAST_EPISODE_CURRENT"]
-            )
-            or (current_status == "REPEATING" and self.options["SET_TO_COMPLETED_AFTER_LAST_EPISODE_REWATCHING"])
-        ):
-            status_to_set = "COMPLETED"
+        # Set to COMPLETED if last episode
+        if file_progress == total_episodes and self.options["SET_TO_COMPLETED_AFTER_LAST_EPISODE_CURRENT"]:
+            status_to_set = "completed"
+            is_rewatching = False
 
-        query = AniListQueries.SAVE_MEDIA_LIST_ENTRY
+        # Make the PATCH request
+        endpoint = f"anime/{anime_id}/my_list_status"
+        update_data = {"num_watched_episodes": file_progress}
 
-        variables = {"mediaId": anime_id, "progress": file_progress}
         if status_to_set:
-            variables["status"] = status_to_set
+            update_data["status"] = status_to_set
+        if is_rewatching:
+            update_data["is_rewatching"] = True
 
-        response = self.make_api_request(query, variables, self.access_token)
-        if response and "data" in response:
-            updated_progress = response["data"]["SaveMediaListEntry"]["progress"]
+        response = self.make_api_request(endpoint, method="PATCH", data=update_data)
+
+        if response and "num_episodes_watched" in response:
+            updated_progress = response["num_episodes_watched"]
+            updated_status = response["status"]
             osd_message(f'Updated "{anime_name}" to: {updated_progress}')
             print(f"Episode count updated successfully! New progress: {updated_progress}")
-            updated_status = response["data"]["SaveMediaListEntry"]["status"]
-
             return AnimeInfo(anime_id, anime_name, updated_progress, total_episodes, file_progress, updated_status)
+
         print("Failed to update episode count.")
         raise Exception("Failed to update episode count.")
 
     def add_anime_to_list(
-        self, anime_id: int, anime_name: str, initial_status: str = "PLANNING", initial_progress: int = 0
+        self, anime_id: int, anime_name: str, initial_status: str = "plan_to_watch", initial_progress: int = 0
     ) -> bool:
         """
-        Add an anime to the user's AniList.
-
-        Args:
-            anime_id (int): AniList anime ID.
-            anime_name (str): Anime title for logging.
-            initial_status (str): Initial status to set (default: 'PLANNING').
-            initial_progress (int): Initial progress to set (default: 0).
-
-        Returns:
-            bool: True if successfully added, False otherwise.
+        Add an anime to the user's MyAnimeList.
         """
         try:
-            query = AniListQueries.SAVE_MEDIA_LIST_ENTRY
-            variables = {"mediaId": anime_id, "status": initial_status, "progress": initial_progress}
+            endpoint = f"anime/{anime_id}/my_list_status"
+            update_data = {"status": initial_status, "num_watched_episodes": initial_progress}
 
-            response = self.make_api_request(query, variables, self.access_token)
+            response = self.make_api_request(endpoint, method="PATCH", data=update_data)
 
-            if response and "data" in response and response["data"]["SaveMediaListEntry"]:
+            # MAL returns the list status object upon successful creation
+            if response and "status" in response:
                 return True
+
             print(f'Failed to add "{anime_name}" to your list.')
             return False
         except Exception as e:
@@ -1027,7 +814,7 @@ def main() -> None:
             options.update(user_options)
 
         # Pass options to AniListUpdater
-        updater = AniListUpdater(options, sys.argv[2])
+        updater = MALUpdater(options, sys.argv[2])
         updater.handle_filename(sys.argv[1])
 
     except Exception as e:
