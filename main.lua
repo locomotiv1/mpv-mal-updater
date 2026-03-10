@@ -1,11 +1,11 @@
 --[[
-Configuration options for anilistUpdater (set in anilistUpdater.conf):
+Configuration options for malUpdater (set in malUpdater.conf):
 
 DIRECTORIES: Table or comma/semicolon-separated string. The directories the script will work on. Leaving it empty will make it work on every video you watch with mpv. Example: DIRECTORIES = {"D:/Torrents", "D:/Anime"}
 
 EXCLUDED_DIRECTORIES: Table or comma/semicolon-separated string. Useful for ignoring paths inside directories from above. Example: EXCLUDED_DIRECTORIES = {"D:/Torrents/Watched", "D:/Anime/Planned"}
 
-UPDATE_PERCENTAGE: Number (0-100). The percentage of the video you need to watch before it updates AniList automatically. Default is 85 (usually before the ED of a usual episode duration).
+UPDATE_PERCENTAGE: Number (0-100). The percentage of the video you need to watch before it updates MyAnimeList automatically. Default is 85 (usually before the ED of a usual episode duration).
 
 SET_COMPLETED_TO_REWATCHING_ON_FIRST_EPISODE: Boolean. If true, when watching episode 1 of a completed anime, set it to rewatching and update progress.
 
@@ -57,7 +57,7 @@ local function parse_directory_string(dir_string)
 end
 
 -- Default config
-local default_conf = [[# anilistUpdater Configuration
+local default_conf = [[# malUpdater Configuration
 # For detailed explanations of all available options, see:
 # https://github.com/AzuredBlue/mpv-anilist-updater?tab=readme-ov-file#configuration-anilistupdaterconf
 
@@ -131,7 +131,7 @@ end
 
 -- If still not found or created, warn and use defaults
 if not conf_path then
-	mp.msg.warn("Could not find or create anilistUpdater.conf in any known location! Using default options.")
+	mp.msg.warn("Could not find or create malUpdater.conf in any known location! Using default options.")
 end
 
 -- Initialize options with defaults
@@ -148,7 +148,7 @@ local options = {
 }
 
 -- Override defaults with values from config file
-mpoptions.read_options(options, "anilistUpdater")
+mpoptions.read_options(options, "malUpdater")
 
 -- Parse DIRECTORIES and EXCLUDED_DIRECTORIES using helper function
 options.DIRECTORIES = parse_directory_string(options.DIRECTORIES)
@@ -298,7 +298,7 @@ end
 -- Function to launch the .py script
 function update_mal(action)
 	if action == "launch" and not options.SILENT_MODE then
-		mp.osd_message("Launching AniList", 2)
+		mp.osd_message("Launching MAL", 2)
 	end
 	local script_dir = debug.getinfo(1).source:match("@?(.*/)")
 
@@ -340,7 +340,7 @@ mp.register_event("file-loaded", function()
 end)
 
 -- Default keybinds - can be customized in input.conf using script-binding commands
-mp.add_key_binding("ctrl+a", "update_anilist", function()
+mp.add_key_binding("ctrl+a", "update_mal", function()
 	update_mal("update")
 end)
 

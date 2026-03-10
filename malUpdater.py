@@ -107,9 +107,6 @@ class MALUpdater:
         self.ACTION: str = action
         self._cache: dict[str, Any] | None = None
 
-    # Load token from anilistToken.txt
-    AUTH_PATH: str = os.path.join(os.path.dirname(__file__), "mal_auth.json")
-
     def load_access_token(self) -> str | None:
         """
         Load access token from file, supporting legacy formats.
@@ -121,7 +118,7 @@ class MALUpdater:
             if not os.path.exists(self.AUTH_PATH):
                 print(f"Auth file not found at {self.AUTH_PATH}. Please run setup_auth.py first.")
                 return None
-            with open(self.AUTH_PATH, "r", encoding="utf-8") as f:
+            with open(self.AUTH_PATH, encoding="utf-8") as f:
                 auth_data = json.load(f)
             return auth_data.get("access_token")
 
@@ -316,51 +313,6 @@ class MALUpdater:
     # ──────────────────────────────────────────────────────────────────────────────────────────────────
     # SEASON & EPISODE HANDLING
     # ──────────────────────────────────────────────────────────────────────────────────────────────────
-
-    @staticmethod
-    def season_order(season: str | None) -> int:
-        """
-        Get numeric order for season sorting.
-
-        Args:
-            season (str | None): Season name (WINTER, SPRING, SUMMER, FALL).
-
-        Returns:
-            int: Order value.
-        """
-        return {"WINTER": 1, "SPRING": 2, "SUMMER": 3, "FALL": 4}.get(season, 5)  # type: ignore
-
-    # Finds the season and episode of an anime with absolute numbering
-    def find_season_and_episode(
-        self, seasons: list[dict[str, Any]] | None, absolute_episode: int
-    ) -> SeasonEpisodeInfo:
-        """
-        Find correct season and relative episode for absolute episode number.
-
-        Args:
-            seasons (list[dict[str, Any]]): Season dicts.
-            absolute_episode (int): Absolute episode number.
-
-        Returns:
-            SeasonEpisodeInfo: Season and episode information.
-        """
-        if seasons is None:
-            return SeasonEpisodeInfo(None, None, None, None, None)
-
-        accumulated_episodes = 0
-        for season in seasons:
-            season_episodes = season.get("episodes", 12) if season.get("episodes") else 12
-
-            if accumulated_episodes + season_episodes >= absolute_episode:
-                return SeasonEpisodeInfo(
-                    season.get("id"),
-                    season.get("title", {}).get("romaji"),
-                    season.get("mediaListEntry", {}).get("progress") if season.get("mediaListEntry") else None,
-                    episodes=season.get("episodes"),
-                    relative_episode=absolute_episode - accumulated_episodes,
-                )
-            accumulated_episodes += season_episodes
-        return SeasonEpisodeInfo(None, None, None, None, None)
 
     # ──────────────────────────────────────────────────────────────────────────────────────────────────
     # FILE PROCESSING & PARSING
@@ -573,71 +525,11 @@ class MALUpdater:
     # ANIME INFO & PROGRESS UPDATES
     # ──────────────────────────────────────────────────────────────────────────────────────────────────
 
-    def filter_valid_seasons(self, seasons: list[dict[str, Any]]) -> list[dict[str, Any]] | None:
-        """
-        Filter and sort valid seasons.
-
-        Args:
-            seasons (list[dict[str, Any]]): Season dicts from AniList API.
-
-        Returns:
-            list[dict[str, Any]] | None: Filtered and sorted seasons or None if no seasons could be found.
-        """
-        valid_formats = {"TV", "ONA"}
-
-        # Build a list of the main series using relationType, assuming [0] is the correct series
-        season_map = {s["id"]: s for s in seasons}
-
-        # Use the first TV | ONA, with duration > 21 as a starting point
-        current_node = None
-        for s in seasons:
-            if s["format"] in valid_formats and (
-                (s["duration"] is None and s["status"] == "RELEASING")
-                or (s["duration"] is not None and s["duration"] > 21)
-            ):
-                current_node = s
-                break
-
-        if current_node is None:
-            return None
-
-        main_series = [current_node]
-        visited_ids = {current_node["id"]}
-
-        while True:
-            edges = current_node.get("relations", {}).get("edges", [])
-
-            # It might have more than 1 sequel, check for the ones in "season".
-            # As "season" might be the user's list, a sequel might not be in season_map
-            candidate_sequels = [
-                edge["node"]
-                for edge in edges
-                if edge["relationType"] == "SEQUEL" and edge["node"]["id"] in season_map
-            ]
-
-            if not candidate_sequels:
-                break
-
-            # At this point, candidate_sequels contain sequels in season_map. Prioritise those that are "TV" or "ONA"
-            next_sequel = max(candidate_sequels, key=lambda x: x["format"] in valid_formats)
-            next_id = next_sequel["id"]
-
-            if next_id in visited_ids:
-                break
-
-            visited_ids.add(next_id)
-            current_node = season_map[next_id]
-
-            if current_node["format"] in valid_formats:
-                main_series.append(current_node)
-
-        return main_series
-
     def get_anime_info_and_progress(self, file_info: FileInfo) -> AnimeInfo:
         """
         Query MyAnimeList for anime info and user progress.
         """
-        name, file_progress, year, file_format = file_info
+        name, file_progress, _year, _file_format = file_info
 
         # Search MAL via GET request
         endpoint = "anime"
