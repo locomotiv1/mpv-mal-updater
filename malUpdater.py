@@ -31,9 +31,7 @@ from typing import Any
 import requests
 from guessit import guessit  # type: ignore
 
-# ═══════════════════════════════════════════════════════════════════════════════════════════════════════
 # DATA CLASSES
-# ═══════════════════════════════════════════════════════════════════════════════════════════════════════
 
 
 @dataclass
@@ -78,9 +76,7 @@ class FileInfo:
         return iter((self.name, self.episode, self.year, self.file_format))
 
 
-# ═══════════════════════════════════════════════════════════════════════════════════════════════════════
-# MAIN ANILIST UPDATER CLASS
-# ═══════════════════════════════════════════════════════════════════════════════════════════════════════
+# MAIN MAl UPDATER CLASS
 
 
 class MALUpdater:
@@ -97,9 +93,7 @@ class MALUpdater:
     CLEAN_PATTERN: str = rf"(?: - Movie)|[{re.escape(_CHARS_TO_REPLACE)}](?!\s*\d)"
     VERSION_REGEX: re.Pattern[str] = re.compile(r"(E\d+)v\d")
 
-    # ──────────────────────────────────────────────────────────────────────────────────────────────────
     # INITIALIZATION & TOKEN HANDLING
-    # ──────────────────────────────────────────────────────────────────────────────────────────────────
 
     def __init__(self, options: dict[str, Any], action: str) -> None:
         self.access_token: str | None = self.load_access_token()
@@ -157,9 +151,7 @@ class MALUpdater:
 
         return token
 
-    # ──────────────────────────────────────────────────────────────────────────────────────────────────
     # CACHE MANAGEMENT
-    # ──────────────────────────────────────────────────────────────────────────────────────────────────
 
     def cache_to_file(self, path: str, guessed_name: str, absolute_progress: int, result: AnimeInfo) -> None:
         """
@@ -274,13 +266,53 @@ class MALUpdater:
         except Exception as e:
             print(f"Failed saving cache.json: {e}")
 
-    # ──────────────────────────────────────────────────────────────────────────────────────────────────
     # API COMMUNICATION
-    # ──────────────────────────────────────────────────────────────────────────────────────────────────
 
-    # Function to make an api request to AniList's api
+    def refresh_access_token(self) -> bool:
+        """Attempt to refresh the MAL access token."""
+        print("Access token expired. Attempting to refresh...")
+        try:
+            with open(self.AUTH_PATH, encoding="utf-8") as f:
+                auth_data = json.load(f)
+
+            client_id = auth_data.get("client_id")
+            refresh_token = auth_data.get("refresh_token")
+
+            if not client_id or not refresh_token:
+                print("Missing client_id or refresh_token. Please run setup_auth.py again.")
+                return False
+
+            data = {
+                "client_id": client_id,
+                "grant_type": "refresh_token",
+                "refresh_token": refresh_token,
+            }
+
+            response = requests.post("https://myanimelist.net/v1/oauth2/token", data=data)
+
+            if response.status_code == 200:
+                token_data = response.json()
+
+                # Update auth_data with new tokens
+                auth_data["access_token"] = token_data["access_token"]
+                auth_data["refresh_token"] = token_data["refresh_token"]
+
+                with open(self.AUTH_PATH, "w", encoding="utf-8") as f:
+                    json.dump(auth_data, f, indent=4)
+
+                self.access_token = token_data["access_token"]
+                print("Token refreshed successfully!")
+                return True
+            else:
+                print(f"Failed to refresh token: {response.status_code} - {response.text}")
+                return False
+
+        except Exception as e:
+            print(f"Error during token refresh: {e}")
+            return False
+
     def make_api_request(
-        self, endpoint: str, method: str = "GET", data: dict[str, Any] | None = None
+        self, endpoint: str, method: str = "GET", data: dict[str, Any] | None = None, is_retry: bool = False
     ) -> dict[str, Any] | None:
         """Make REST request to MyAnimeList API v2."""
         headers = {"Authorization": f"Bearer {self.access_token}"}
@@ -290,33 +322,28 @@ class MALUpdater:
             if method == "GET":
                 response = requests.get(url, headers=headers, params=data, timeout=10)
             elif method in {"PATCH", "POST", "PUT"}:
-                # MAL requires x-www-form-urlencoded for modifying list entries
                 headers["Content-Type"] = "application/x-www-form-urlencoded"
                 response = requests.patch(url, headers=headers, data=data, timeout=10)
             else:
-                # This explicitly handles any other method so Pyright knows 'response' is safe
                 print(f"Unsupported HTTP method: {method}")
                 return None
 
-            # 200 OK, 201 Created, 204 No Content
+            if response.status_code == 401 and not is_retry:
+                if self.refresh_access_token():
+                    # Retry the exact same request once if the token was successfully refreshed
+                    return self.make_api_request(endpoint, method, data, is_retry=True)
+
             if response.status_code in {200, 201, 204}:
                 return response.json() if response.text else {}
 
-            print(
-                f"API request failed: {response.status_code} - {response.text}\nEndpoint: {endpoint}\nData: {data}"
-            )
+            print(f"API request failed: {response.status_code} - {response.text}\nEndpoint: {endpoint}")
             return None
         except Exception as e:
             print(f"Request error: {e}")
             return None
 
-    # ──────────────────────────────────────────────────────────────────────────────────────────────────
     # SEASON & EPISODE HANDLING
-    # ──────────────────────────────────────────────────────────────────────────────────────────────────
-
-    # ──────────────────────────────────────────────────────────────────────────────────────────────────
     # FILE PROCESSING & PARSING
-    # ──────────────────────────────────────────────────────────────────────────────────────────────────
 
     def handle_filename(self, filename: str) -> None:
         """
@@ -521,9 +548,7 @@ class MALUpdater:
         print(f"Guessed: {guessed_name}{f' {file_format}' if file_format else ''} - E{episode} {year}")
         return FileInfo(guessed_name, episode, year, file_format)
 
-    # ──────────────────────────────────────────────────────────────────────────────────────────────────
     # ANIME INFO & PROGRESS UPDATES
-    # ──────────────────────────────────────────────────────────────────────────────────────────────────
 
     def get_anime_info_and_progress(self, file_info: FileInfo) -> AnimeInfo:
         """
@@ -554,7 +579,6 @@ class MALUpdater:
         my_list_status = first_result.get("my_list_status")
         if my_list_status:
             current_progress = my_list_status.get("num_episodes_watched")
-            # MAL statuses: watching, completed, on_hold, dropped, plan_to_watch
             current_status = my_list_status.get("status")
 
         anime_data = AnimeInfo(mal_id, title, current_progress, total_episodes, file_progress, current_status)
@@ -575,7 +599,6 @@ class MALUpdater:
         if anime_id is None:
             raise Exception("Couldn't find that anime! Make sure it is on your list and the title is correct.")
 
-        # Only launch MyAnimeList
         if self.ACTION == "launch":
             osd_message(f'Opening MAL for "{anime_name}"')
             print(f'Opening MAL for "{anime_name}": https://myanimelist.net/anime/{anime_id}')
@@ -672,11 +695,6 @@ class MALUpdater:
             return False
 
 
-# ═══════════════════════════════════════════════════════════════════════════════════════════════════════
-# MAIN ENTRY POINT
-# ═══════════════════════════════════════════════════════════════════════════════════════════════════════
-
-
 def osd_message(msg: str) -> None:
     """Display an on-screen display (OSD) message."""
     print(f"OSD:{msg}")
@@ -688,8 +706,8 @@ def main() -> None:
         # Reconfigure to utf-8
         if sys.stdout.encoding != "utf-8":
             try:
-                sys.stdout.reconfigure(encoding="utf-8")  # type: ignore
-                sys.stderr.reconfigure(encoding="utf-8")  # type: ignore
+                sys.stdout.reconfigure(encoding="utf-8")
+                sys.stderr.reconfigure(encoding="utf-8")
             except Exception as e_reconfigure:
                 print(f"Couldn't reconfigure stdout/stderr to UTF-8: {e_reconfigure}", file=sys.stderr)
 
